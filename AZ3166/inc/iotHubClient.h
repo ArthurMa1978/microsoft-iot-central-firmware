@@ -9,6 +9,7 @@ typedef int (*methodCallback)(const char *, size_t, char **response, size_t* res
 void initIotHubClient(bool traceOn);
 bool sendTelemetry(const char *payload);
 bool sendReportedProperty(const char *payload);
+void echoDesiredProperty(void);
 
 bool registerMethod(const char *methodName, methodCallback callback);
 bool registerDesiredProperty(const char *propertyName, methodCallback callback);

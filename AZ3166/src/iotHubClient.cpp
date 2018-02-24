@@ -3,6 +3,7 @@
 
 #include "Arduino.h"
 #include "AzureIotHub.h"
+#include "DevKitMQTTClient.h"
 
 #include <ArduinoJson.h>
 
@@ -10,32 +11,31 @@
 #include "../inc/config.h"
 #include "../inc/iotHubClient.h"
 #include "../inc/stats.h"
+#include "../inc/utility.h"
 #include "../inc/wifi.h"
 
 #define MAX_CALLBACK_COUNT 32
 
 // forward declarations
-static IOTHUBMESSAGE_DISPOSITION_RESULT receiveMessageCallback(IOTHUB_MESSAGE_HANDLE message, void *userContextCallback);
-static void deviceTwinGetStateCallback(DEVICE_TWIN_UPDATE_STATE update_state, const unsigned char* payLoad, size_t size, void* userContextCallback);
-static int DeviceDirectMethodCallback(const char* method_name, const unsigned char* payload, size_t size, unsigned char** response, size_t* resp_size, void* userContextCallback);
-static void connectionStatusCallback(IOTHUB_CLIENT_CONNECTION_STATUS result, IOTHUB_CLIENT_CONNECTION_STATUS_REASON reason, void* userContextCallback);
-static void sendConfirmationCallback(IOTHUB_CLIENT_CONFIRMATION_RESULT result, void *userContextCallback);
-static void deviceTwinConfirmationCallback(int status_code, void* userContextCallback);
-static void checkConnection();
-void hubClientYield(void);
+static void receiveMessageCallback(const char *text, int length);
+static void deviceTwinGetStateCallback(DEVICE_TWIN_UPDATE_STATE updateState, const unsigned char *payLoad, int size);
+static int deviceDirectMethodCallback(const char *methodName, const unsigned char *payLoad, int size, unsigned char **response, int *response_size);
+static void deviceTwinConfirmationCallback(int status_code);
+
+typedef struct TWIN_PROPERTY_REPORTED_TAG {
+    char* name;
+    char* value;
+    signed int version;
+
+    char* status;
+    int statusCode;
+} TWIN_PROPERTY_REPORTED;
 
 typedef struct CALLBACK_LOOKUP_TAG {
     char* name;
     methodCallback callback;
 } CALLBACK_LOOKUP;
 
-static int callbackCounter;
-static int receiveContext = 0;
-static int receiveTwinContext = 0;
-static int statusContext = 0;
-static int trackingId = 0;
-static int reconnect = false;
-static bool saveTraceOn = false;
 static CALLBACK_LOOKUP methodCallbackList[MAX_CALLBACK_COUNT];
 static int methodCallbackCount = 0;
 static CALLBACK_LOOKUP desiredCallbackList[MAX_CALLBACK_COUNT];
@@ -43,127 +43,49 @@ static int desiredCallbackCount = 0;
 static String deviceId;
 static String hubName;
 
-IOTHUB_CLIENT_LL_HANDLE iotHubClientHandle;
-
-typedef struct EVENT_INSTANCE_TAG {
-    IOTHUB_MESSAGE_HANDLE messageHandle;
-    int messageTrackingId; // For tracking the messages within the user callback.
-} EVENT_INSTANCE;
+Queue<TWIN_PROPERTY_REPORTED, 16> queuePropertyReported;
 
 void initIotHubClient(bool traceOn) {
-    saveTraceOn = traceOn;
-    String connString = readConnectionString();;
+    String connString = readConnectionString();
     deviceId = connString.substring(connString.indexOf("DeviceId=") + 9, connString.indexOf(";SharedAccess"));
     hubName = connString.substring(connString.indexOf("HostName=") + 9, connString.indexOf(";DeviceId="));
     hubName = hubName.substring(0, hubName.indexOf("."));
 
-    if (platform_init() != 0) {
-        (void)Serial.printf("Failed to initialize the platform.\r\n");
-        return;
-    }
+    DevKitMQTTClient_Init(true, traceOn);
 
-    if ((iotHubClientHandle = IoTHubClient_LL_CreateFromConnectionString(connString.c_str(), MQTT_Protocol)) == NULL) {
-        (void)Serial.printf("ERROR: iotHubClientHandle is NULL!\r\n");
-        return;
-    }
+    // Setting Message call back, so we can receive Commands.
+    DevKitMQTTClient_SetMessageCallback(receiveMessageCallback);
 
-    IoTHubClient_LL_SetRetryPolicy(iotHubClientHandle, IOTHUB_CLIENT_RETRY_EXPONENTIAL_BACKOFF, 1200);
+    // Setting twin call back, so we can receive desired properties.
+    DevKitMQTTClient_SetDeviceTwinCallback(deviceTwinGetStateCallback);
 
-    IoTHubClient_LL_SetOption(iotHubClientHandle, "logtrace", &saveTraceOn);
+    // Setting twin direct method callback, so we can receive direct method calls.
+    DevKitMQTTClient_SetDeviceMethodCallback(deviceDirectMethodCallback);
 
-    if (IoTHubClient_LL_SetOption(iotHubClientHandle, "TrustedCerts", certificates) != IOTHUB_CLIENT_OK) {
-        (void)Serial.printf("Failed to set option \"TrustedCerts\"\r\n");
-        return;
-    }
-
-    // Setting Message call back, so we can receive Commands. 
-    if (IoTHubClient_LL_SetMessageCallback(iotHubClientHandle, receiveMessageCallback, &receiveContext) != IOTHUB_CLIENT_OK) {
-        (void)Serial.printf("ERROR: IoTHubClient_LL_SetMessageCallback..........FAILED!\r\n");
-        return;
-    }
-
-    // Setting twin call back, so we can receive desired properties. 
-    if (IoTHubClient_LL_SetDeviceTwinCallback(iotHubClientHandle, deviceTwinGetStateCallback, &receiveTwinContext) != IOTHUB_CLIENT_OK) {
-        (void)Serial.printf("ERROR: IoTHubClient_LL_SetDeviceTwinCallback..........FAILED!\r\n");
-        return;
-    }
-
-    // Twin direct method callback, so we can receive direct method calls
-    if (IoTHubClient_LL_SetDeviceMethodCallback(iotHubClientHandle, DeviceDirectMethodCallback, &receiveContext) != IOTHUB_CLIENT_OK) {
-        (void)printf("ERROR: IoTHubClient_LL_SetDeviceMethodCallback..........FAILED!\r\n");
-        return;
-    }
-
-    // Connection status change callback
-    if (IoTHubClient_LL_SetConnectionStatusCallback(iotHubClientHandle, connectionStatusCallback, &statusContext) != IOTHUB_CLIENT_OK) {
-        (void)Serial.printf("ERROR: IoTHubClient_LL_SetConnectionStatusCallback..........FAILED!\r\n");
-        return;
-    }
+    // Setting report confirmation callback.
+    DevKitMQTTClient_SetReportConfirmationCallback(deviceTwinConfirmationCallback);
 }
 
 bool sendTelemetry(const char *payload) {
-    checkConnection();
-    
-    IOTHUB_CLIENT_RESULT hubResult = IOTHUB_CLIENT_RESULT::IOTHUB_CLIENT_OK;
-
-    EVENT_INSTANCE *currentMessage = (EVENT_INSTANCE*)malloc(sizeof(EVENT_INSTANCE));
-    currentMessage->messageHandle = IoTHubMessage_CreateFromByteArray((const unsigned char*)payload, strlen(payload));
-    if (currentMessage->messageHandle == NULL) {
-        (void)Serial.printf("ERROR: iotHubMessageHandle is NULL!\r\n");
-        free(currentMessage);
-        return false;
-    }
-    currentMessage->messageTrackingId = trackingId++;
-
-    MAP_HANDLE propMap = IoTHubMessage_Properties(currentMessage->messageHandle);
+    EVENT_INSTANCE* message = DevKitMQTTClient_Event_Generate(payload, MESSAGE);
 
     // add a timestamp to the message - illustrated for the use in batching
     time_t seconds = time(NULL);
-    String temp = ctime(&seconds);
-    temp.replace("\n","\0");
-    if (Map_AddOrUpdate(propMap, "timestamp", temp.c_str()) != MAP_OK)
-    {
-        Serial.println("ERROR: Adding message property failed");
-    }
-    
-    // submit the message to the Azure IoT hub
-    hubResult = IoTHubClient_LL_SendEventAsync(iotHubClientHandle, currentMessage->messageHandle, sendConfirmationCallback, currentMessage);
-    if (hubResult != IOTHUB_CLIENT_OK) {
-        (void)Serial.printf("ERROR: IoTHubClient_LL_SendEventAsync..........FAILED (%s)!\r\n", hubResult);
-        incrementErrorCount();
-        IoTHubMessage_Destroy(currentMessage->messageHandle);
-        free(currentMessage);
-        return false;
-    }
-    (void)Serial.printf("IoTHubClient_LL_SendEventAsync accepted message for transmission to IoT Hub.\r\n");
-
-    // yield to process any work to/from the hub
-    hubClientYield();
-
-    return true;
+    char *temp = ctime(&seconds);
+    temp[strlen(temp) - 1] = 0;   // There is a new line character ('\n') at the end of the string which will disturb the json string, so remove it
+    DevKitMQTTClient_Event_AddProp(message, "timestamp", temp);
+    return DevKitMQTTClient_SendEventInstance(message);
 }
 
 bool sendReportedProperty(const char *payload) {
-    checkConnection();
-    
-    bool retValue = true;
-    
-    IOTHUB_CLIENT_RESULT result = IoTHubClient_LL_SendReportedState(iotHubClientHandle, (const unsigned char*)payload, strlen(payload), deviceTwinConfirmationCallback, NULL);
-
-    if (result != IOTHUB_CLIENT_OK) {
-        LogError("Failure sending reported property!!!");
-        retValue = false;
-    }
-
-    return retValue;
+    EVENT_INSTANCE* message = DevKitMQTTClient_Event_Generate(payload, STATE);
+    return DevKitMQTTClient_SendEventInstance(message);
 }
 
 // register callbacks for direct and cloud to device messages
 bool registerMethod(const char *methodName, methodCallback callback) {
     if (methodCallbackCount < MAX_CALLBACK_COUNT) {
-        methodCallbackList[methodCallbackCount].name = (char*)malloc(strlen(methodName) + 1);
-        strcpy(methodCallbackList[methodCallbackCount].name, (char*)methodName);
-        methodCallbackList[methodCallbackCount].name = strupr(methodCallbackList[methodCallbackCount].name);
+        methodCallbackList[methodCallbackCount].name = strdup(methodName);
         methodCallbackList[methodCallbackCount].callback = callback;
         methodCallbackCount++;
         return true;
@@ -175,9 +97,7 @@ bool registerMethod(const char *methodName, methodCallback callback) {
 // register callbacks for desired properties
 bool registerDesiredProperty(const char *propertyName, methodCallback callback) {
     if (desiredCallbackCount < MAX_CALLBACK_COUNT) {
-        desiredCallbackList[desiredCallbackCount].name = (char*)malloc(strlen(propertyName) + 1);
-        strcpy(desiredCallbackList[desiredCallbackCount].name, (char*)propertyName);
-        desiredCallbackList[desiredCallbackCount].name = strupr(desiredCallbackList[desiredCallbackCount].name);
+        desiredCallbackList[desiredCallbackCount].name = strdup(propertyName);
         desiredCallbackList[desiredCallbackCount].callback = callback;
         desiredCallbackCount++;
         return true;
@@ -188,21 +108,17 @@ bool registerDesiredProperty(const char *propertyName, methodCallback callback) 
 
 void closeIotHubClient(void)
 {
-    IoTHubClient_LL_Destroy(iotHubClientHandle);
+    DevKitMQTTClient_Close();
 }
 
-static IOTHUBMESSAGE_DISPOSITION_RESULT receiveMessageCallback(IOTHUB_MESSAGE_HANDLE message, void *userContextCallback)
+static void receiveMessageCallback(const char *text, int length)
 {
-    int *counter = (int *)userContextCallback;
-    const char *buffer;
-    size_t size;
-    
-    // get message content
-    if (IoTHubMessage_GetByteArray(message, (const unsigned char **)&buffer, &size) != IOTHUB_MESSAGE_OK) {
-        (void)Serial.printf("unable to retrieve the message data\r\n");
-    } else {
-        (void)Serial.printf("Received Message [%d], Size=%d\r\n", *counter, (int)size);
+    if (text == NULL || length < 1)
+    {
+        return;
     }
+    char *buffer = (char *)calloc(length + 1, 1);
+    memcpy(buffer, text, length);
 
     // message format expected:
     // {
@@ -213,34 +129,25 @@ static IOTHUBMESSAGE_DISPOSITION_RESULT receiveMessageCallback(IOTHUB_MESSAGE_HA
     //         ...
     //     }
     // }
-
     DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.parseObject(buffer);
-
-    String methodName = root["methodName"];
-    methodName.toUpperCase();
-
+    const char *methodName = root["methodName"];
     int status = 0;
     char *methodResponse;
-    size_t responseSize;
-
+    
     // lookup if the method has been registered to a function
     for(int i = 0; i < methodCallbackCount; i++) {
-        if (methodName == methodCallbackList[i].name) {
-            String params = root["payload"];
-            status = methodCallbackList[i].callback((const char*)params.c_str(), params.length(), &methodResponse, &responseSize);
+        if (_stricmp(methodName, methodCallbackList[i].name) == 0) {
+            const char* params = root["payload"];
+            status = methodCallbackList[i].callback(params, strlen(params), &methodResponse, NULL);
             break;
         }
     }
-
-    (*counter)++;
-    return IOTHUBMESSAGE_ACCEPTED;
+    free(buffer);
 }
 
-static int DeviceDirectMethodCallback(const char* method_name, const unsigned char* payload, size_t size, unsigned char** response, size_t* resp_size, void* userContextCallback)
+static int deviceDirectMethodCallback(const char *methodName, const unsigned char *payLoad, int size, unsigned char **response, int *response_size)
 {
-    (void)userContextCallback;
-
     // message format expected:
     // {
     //     "methodName": "reboot",
@@ -254,159 +161,147 @@ static int DeviceDirectMethodCallback(const char* method_name, const unsigned ch
 
     int status = 0;
     char* methodResponse;
-    size_t responseSize;
+    
+    char *buffer = (char *)calloc(size + 1, 1);
+    memcpy(buffer, payLoad, size);
 
     // lookup if the method has been registered to a function
-    String methodName = method_name;
-    methodName.toUpperCase();
     for(int i = 0; i < methodCallbackCount; i++) {
-        if (methodName == methodCallbackList[i].name) {
-            status = methodCallbackList[i].callback((const char*)payload, size, &methodResponse, &responseSize);
+        if (_stricmp(methodName, methodCallbackList[i].name) == 0) {
+            status = methodCallbackList[i].callback((const char*)buffer, size + 1, &methodResponse, NULL);
             break;
         }
     }
 
-    Serial.printf("Device Method %s called\r\n"), method_name;
-
-    String responseString = "{ \"Response\":{{response}}}";
-    responseString.replace("{{response}}", methodResponse);
-
-    *resp_size = responseString.length();
-    if ((*response = (unsigned char*)malloc(*resp_size)) == NULL) {
-        status = -1;
-    } else {
-        responseString.toCharArray((char*)*response, *resp_size + 1);
-    }
+    Serial.printf("Device Method %s called\r\n", methodName);
+    free(buffer);
 
     return status;
 }
 
 // every desired property change gets echoed back as a reported property
-void echoDesired(const char *propertyName, const char *message, const char *status, int statusCode) {
-    DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.parseObject(message);
-    const char *value = root[propertyName]["value"];
-    const char *desiredVersion = root["$version"];
-    if (root.containsKey("desired")) {
-        value = root["desired"][propertyName]["value"];
-        desiredVersion = root["desired"]["$version"];   
-    } else {
-        propertyName = root.begin()->key;
-        value = root[propertyName]["value"];
-        desiredVersion = root["$version"];     
-    }
+void echoDesiredProperty(void) {
+    while (true) {
+        osEvent evt = queuePropertyReported.get(1);
+        if (evt.status == osEventMessage) {
+            char buff[400];
+            TWIN_PROPERTY_REPORTED *propertyReported = (TWIN_PROPERTY_REPORTED*)evt.value.p;
 
-    char buff[4096];
-    String echoTemplate = F("{\"%s\":{\"value\":%s, \"statusCode\":%d, \"status\":\"%s\", \"desiredVersion\":%s}}");
-    sprintf(buff, echoTemplate.c_str(), propertyName, value, statusCode, status, desiredVersion);
-    Serial.printf(buff);
-
-    if (sendReportedProperty(buff)) {
-        Serial.printf("Desired property %s successfully echoed back as a reported property", propertyName);
-        incrementReportedCount();
-    } else {
-        Serial.printf("Desired property %s failed to be echoed back as a reported property", propertyName);
-        incrementErrorCount();
+            sprintf(buff, "{\"%s\":{\"value\":%s, \"statusCode\":%d, \"status\":\"%s\", \"desiredVersion\":%d}}", 
+                propertyReported->name, propertyReported->value, propertyReported->statusCode, propertyReported->status, propertyReported->version);
+            
+            if (sendReportedProperty(buff)) {
+                Serial.printf("Desired property %s successfully echoed back as a reported property\r\n", propertyReported->name);
+                incrementReportedCount();
+            } else {
+                Serial.printf("Desired property %s failed to be echoed back as a reported property\r\n", propertyReported->name);
+                incrementErrorCount();
+            }
+            free(propertyReported->name);
+            free(propertyReported->value);
+            free(propertyReported->status);
+            free(propertyReported);
+        }
+        else {
+            break;
+        }
     }
+ }
+
+static void prepareReportedProperty(const char *propertyName, const char *value, int version, const char *status, int statusCode) {
+    TWIN_PROPERTY_REPORTED *propertyReported = (TWIN_PROPERTY_REPORTED*)calloc(1, sizeof(TWIN_PROPERTY_REPORTED));
+    propertyReported->name = strdup(propertyName);
+    propertyReported->value = strdup(value);
+    propertyReported->version = version;
+    propertyReported->status = strdup(status);
+    propertyReported->statusCode = statusCode;
+
+    queuePropertyReported.put(propertyReported);
 }
 
-void callDesiredCallback(const char *propertyName, const char *payLoad, size_t size) {
-    const char *propName = strdup(propertyName);
-    propName = strupr((char*)propName);
+static void callDesiredCallback(const char *propertyName, JsonObject& jsonProperty) {
     int status = 0;
     char *methodResponse;
-    size_t responseSize;
+    
+    // Parse the desired property
+    char value[200];
+    int version;
+        
+    if (jsonProperty.containsKey("desired")) {
+        jsonProperty["desired"][propertyName]["value"].printTo(value, sizeof(value));
+        version = jsonProperty["desired"]["$version"].as<signed int>();
+    } else {
+        jsonProperty[propertyName]["value"].printTo(value, sizeof(value));
+        version = jsonProperty["$version"].as<signed int>();
+    }
 
     for(int i = 0; i < desiredCallbackCount; i++) {
-        if (strcmp(propName, desiredCallbackList[i].name) == 0) {
-            status = desiredCallbackList[i].callback(payLoad, size, &methodResponse, &responseSize);
-            echoDesired(propertyName, payLoad, methodResponse, status);
+        if (_stricmp(propertyName, desiredCallbackList[i].name) == 0) {
+            status = desiredCallbackList[i].callback(NULL, 0, &methodResponse, NULL);
+            prepareReportedProperty(propertyName, value, version, methodResponse, status);
             free(methodResponse);
             break;
         }
     }
 }
 
-static void deviceTwinGetStateCallback(DEVICE_TWIN_UPDATE_STATE update_state, const unsigned char* payLoad, size_t size, void* userContextCallback) {
-    ((char*)payLoad)[size] = 0x00;
+static void deviceTwinGetStateCallback(DEVICE_TWIN_UPDATE_STATE updateState, const unsigned char *payLoad, int size)
+{
+    if (payLoad == NULL || size < 1)
+    {
+        return;
+    }
+    
+    char *buffer = (char *)calloc(size + 1, 1);
+    memcpy(buffer, payLoad, size);
+    
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.parseObject(payLoad);
-
-    if (update_state == DEVICE_TWIN_UPDATE_PARTIAL) {
-        callDesiredCallback(root.begin()->key, (const char*)payLoad, size);
+    JsonObject& root = jsonBuffer.parseObject(buffer);
+    
+    if (updateState == DEVICE_TWIN_UPDATE_PARTIAL) {
+        Serial.println("Processing desired property");
+        for (JsonObject::iterator it = root.begin(); it != root.end(); ++it) {
+            if (it->key[0] != '$') {
+                callDesiredCallback(it->key, root);
+            }
+        }
     } else {
         // loop through all the desired properties
         // look to see if the desired property has an associated reported property
         // if so look if the versions match, if they match do nothing
         // if they don't match then call the associated callback for the desired property
-
-        Serial.println("Processing complete twin");
-
+        Serial.println("Processing complete twin");      
         JsonObject& desired = root["desired"];
         JsonObject& reported = root["reported"];
 
-        for (JsonObject::iterator it=desired.begin(); it!=desired.end(); ++it) {
+        for (JsonObject::iterator it = desired.begin(); it != desired.end(); ++it) {
             if (it->key[0] != '$') {
-                if (reported.containsKey(it->key) && (reported[it->key]["desiredVersion"] == desired["$version"])) {
-                    Serial.printf("key: %s found in reported and versions match\r\n", it->key);
-                } else if (reported[it->key]["value"] != desired[it->key]["value"]){
-                    Serial.printf("key: %s either not found in reported or versions do not match\r\n", it->key);
-                    Serial.println(it->value.as<char*>());
-                    callDesiredCallback(it->key, (const char*)payLoad, size);
-                } else {
-                    echoDesired(it->key, (const char*)payLoad, "completed", 200);
+                if (reported.containsKey(it->key)) {
+                    if(reported[it->key]["value"] == desired[it->key]["value"]) {
+                        // Property found in reported and values match
+                        Serial.printf("key: %s found in reported and values match\r\n", it->key);
+                        // Move next
+                        continue;
+                    }
                 }
+                // Not exist in reported or values do not mismatch
+                Serial.printf("key: %s either not found in reported or values do not match\r\n", it->key);
+                callDesiredCallback(it->key, root);
             }
         }
     }
+    
+    free(buffer);
 }
 
-static void deviceTwinConfirmationCallback(int status_code, void* userContextCallback) {
-    (void)(userContextCallback);
+static void deviceTwinConfirmationCallback(int status_code) {
     LogInfo("DeviceTwin CallBack: Status_code = %u", status_code);
 }
 
-static void connectionStatusCallback(IOTHUB_CLIENT_CONNECTION_STATUS result, IOTHUB_CLIENT_CONNECTION_STATUS_REASON reason, void* userContextCallback) {
-    if (reason == IOTHUB_CLIENT_CONNECTION_NO_NETWORK) {
-        (void)Serial.println("No network connection");
-        reconnect = true;      
-    } else if (result == IOTHUB_CLIENT_CONNECTION_UNAUTHENTICATED && reason == IOTHUB_CLIENT_CONNECTION_EXPIRED_SAS_TOKEN) {
-        (void)Serial.println("Connection timeout");
-        reconnect = true;
-    }
-}
-
-static void sendConfirmationCallback(IOTHUB_CLIENT_CONFIRMATION_RESULT result, void *userContextCallback) {
-    EVENT_INSTANCE *eventInstance = (EVENT_INSTANCE *)userContextCallback;
-    (void)Serial.printf("Confirmation[%d] received for message tracking id = %d with result = %s\r\n", callbackCounter, eventInstance->messageTrackingId, ENUM_TO_STRING(IOTHUB_CLIENT_CONFIRMATION_RESULT, result));
-    callbackCounter++;
-    IoTHubMessage_Destroy(eventInstance->messageHandle);
-    free(eventInstance);
-}
-
-static void checkConnection() {
-    if (reconnect) {
-        // simple reconnection of the client in the event of a disconnect
-        Serial.println("Reconnecting to the IoT Hub");
-        closeIotHubClient();
-        initIotHubClient(saveTraceOn);
-
-        reconnect = false;
-    }
-}
-
-void hubClientYield(void) {
-    checkConnection();
-    
-    int waitTime = 1;
-    IoTHubClient_LL_DoWork(iotHubClientHandle);
-    ThreadAPI_Sleep(waitTime);
-}
-
 // scrolling text global variables
-int displayCharPos = 0; 
-int waitCount = 3;
-String displayHubName;
+static int displayCharPos = 0; 
+static int waitCount = 3;
+static String displayHubName;
 
 void displayDeviceInfo() {
     char buff[64]; 

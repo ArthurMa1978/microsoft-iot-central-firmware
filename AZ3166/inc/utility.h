@@ -7,5 +7,6 @@
 char *f2s(float f, int p);
 String urldecode(String str);
 bool SyncTimeToNTP();
+int _stricmp(const char *a, const char *b);
 
 #endif /* UTILITY_H */

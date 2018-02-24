@@ -29,6 +29,7 @@ Uses the following libraries:
 ***/
 
 #include "Arduino.h"
+#include "DevKitMQTTClient.h"
 #include "EEPROMInterface.h"
 
 #include "inc/iotCentral.h"
@@ -56,7 +57,11 @@ void setup()
         (void)Serial.printf("Configuration found entering telemetry mode.\r\n");
         configured = true;
         telemetrySetup(iotCentralConfig);
+
+        LogTrace("IoTCentralSetup", NULL);
     }
+
+    Serial.println("IoT Central setup complete");
 }
 
 void loop()

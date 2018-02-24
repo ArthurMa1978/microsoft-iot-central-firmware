@@ -4,7 +4,7 @@
 #ifndef OLED_ANIMATION
 #define OLED_ANIMATION_H
 
-void animationInit(char **frames, int maxFrames, int width, int moveLimit, int frameDelay, bool center);
+void animationInit(const char **frames, int maxFrames, int width, int moveLimit, int frameDelay, bool center);
 void clearScreen();
 void renderNextFrame();
 void animationEnd();

@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include "Arduino.h"
-#include "AudioClass.h"
 
 #include <ArduinoJson.h>
 
@@ -12,6 +11,134 @@
 #include "../inc/oledAnimation.h"
 
 #include "../inc/fanSound.h"
+
+static const char fan1[] = { 
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', 'L', '.', '.', '.', '.', 'R', '.',
+    '.', '.', 'L', '.', '.', 'R', '.', '.',
+    '.', '.', '.', 'X', 'X', '.', '.', '.',
+    '.', '.', '.', 'X', 'X', '.', '.', '.',
+    '.', '.', 'R', '.', '.', 'L', '.', '.',
+    '.', 'R', '.', '.', '.', '.', 'L', '.'};
+
+static const char fan2[] = { 
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', 'V', 'v', '.', '.', '.',
+    '.', '.', '.', 'V', 'v', '.', '.', '.',
+    '.', 'H', 'H', 'X', 'X', 'H', 'H', '.',
+    '.', 'h', 'h', 'X', 'X', 'h', 'h', '.',
+    '.', '.', '.', 'V', 'v', '.', '.', '.',
+    '.', '.', '.', 'V', 'v', '.', '.', '.'};
+
+static const char voltage0[] = { 
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.'};
+
+static const char voltage1[] = { 
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G'};
+        
+static const char voltage2[] = { 
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G'};
+
+static const char voltage3[] = { 
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G'};
+
+static const char voltage4[] = { 
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
+    'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G'};
+
+static const char current0[] = { 
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.',
+    '.', '.', '.', '.', '.', '.', '.', '.'};
+
+static const char current1[] = { 
+    'g', 'g', '.', '.', '.', '.', '.', '.',
+    'g', 'g', '.', '.', '.', '.', '.', '.',
+    'g', 'g', '.', '.', '.', '.', '.', '.',
+    'g', 'g', '.', '.', '.', '.', '.', '.',
+    'g', 'g', '.', '.', '.', '.', '.', '.',
+    'g', 'g', '.', '.', '.', '.', '.', '.',
+    'g', 'g', '.', '.', '.', '.', '.', '.',
+    'g', 'g', '.', '.', '.', '.', '.', '.'};
+        
+static const char current2[] = { 
+    'g', 'g', 'g', 'g', '.', '.', '.', '.',
+    'g', 'g', 'g', 'g', '.', '.', '.', '.',
+    'g', 'g', 'g', 'g', '.', '.', '.', '.',
+    'g', 'g', 'g', 'g', '.', '.', '.', '.',
+    'g', 'g', 'g', 'g', '.', '.', '.', '.',
+    'g', 'g', 'g', 'g', '.', '.', '.', '.',
+    'g', 'g', 'g', 'g', '.', '.', '.', '.',
+    'g', 'g', 'g', 'g', '.', '.', '.', '.'};
+
+static const char current3[] = { 
+    'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
+    'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
+    'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
+    'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
+    'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
+    'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
+    'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
+    'g', 'g', 'g', 'g', 'g', 'g', '.', '.'};
+
+static const char current4[] = { 
+    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
+    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
+    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
+    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
+    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
+    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
+    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
+    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g'};
+
+ 
+static const char *fan[] = {fan1, fan2};
+static const char *voltage[] = {voltage0, voltage1, voltage2, voltage3, voltage4, voltage3, voltage2, voltage1, voltage0};
+static const char *current[] = {current0, current1, current2, current3, current4, current3, current2, current1, current0};
+
+static const char *response_completed = "completed";
+static const int successStatusCode = 200;
 
 // handler for the cloud to device (C2D) message
 int cloudMessage(const char *payload, size_t size, char **response, size_t* resp_size) {
@@ -28,9 +155,7 @@ int cloudMessage(const char *payload, size_t size, char **response, size_t* resp
     Screen.print(1, text.c_str(), true);
     delay(2000);
 
-    int status = 200;
-
-    return status;
+    return successStatusCode;
 }
 
 int directMethod(const char *payload, size_t size, char **response, size_t* resp_size) {
@@ -71,49 +196,19 @@ int directMethod(const char *payload, size_t size, char **response, size_t* resp
     delay(100);
     showState();
 
-    int status = 200;
-    String responseString = "\"completed\"";
-    *resp_size = responseString.length();
-    if ((*response = (char*)malloc(*resp_size)) == NULL) {
-        status = -1;
-    } else {
-        responseString.toCharArray((char*)*response, *resp_size + 1);
-    }
-
-    return status;
+    *response = strdup(response_completed);
+    return successStatusCode;
 }
 
 // this is the callback method for the fanSpeed desired property
 int fanSpeedDesiredChange(const char *message, size_t size, char **response, size_t* resp_size) {
-    char fan1[] = { 
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', 'L', '.', '.', '.', '.', 'R', '.',
-        '.', '.', 'L', '.', '.', 'R', '.', '.',
-        '.', '.', '.', 'X', 'X', '.', '.', '.',
-        '.', '.', '.', 'X', 'X', '.', '.', '.',
-        '.', '.', 'R', '.', '.', 'L', '.', '.',
-        '.', 'R', '.', '.', '.', '.', 'L', '.'};
-    char fan2[] = { 
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', 'V', 'v', '.', '.', '.',
-        '.', '.', '.', 'V', 'v', '.', '.', '.',
-        '.', 'H', 'H', 'X', 'X', 'H', 'H', '.',
-        '.', 'h', 'h', 'X', 'X', 'h', 'h', '.',
-        '.', '.', '.', 'V', 'v', '.', '.', '.',
-        '.', '.', '.', 'V', 'v', '.', '.', '.'};
-
-    char *fan[] = {fan1, fan2};
-
     animationInit(fan, 2, 64, 0, 0, true);
 
     Serial.println("fanSpeed desired property just got called");
 
     // turn on the fan - sound
-    AudioClass& Audio = AudioClass::getInstance();
-    Audio.startPlay(fanSoundData, FAN_SOUND_DATA_SIZE);
-
+    playFanSound();
+    
     // show the animation
     Screen.clean();
     for(int i = 0; i < 100; i++) {
@@ -122,72 +217,12 @@ int fanSpeedDesiredChange(const char *message, size_t size, char **response, siz
 
     incrementDesiredCount();
 
-    int status = 200;
-    String responseString = "completed";
-    *resp_size = responseString.length()+1;
-    if ((*response = (char*)malloc(*resp_size)) == NULL) {
-        status = -1;
-    } else {
-        responseString.toCharArray((char*)*response, *resp_size);
-    }
-
-    return status;
+    *response = strdup(response_completed);
+    return successStatusCode;
 }
 
 int voltageDesiredChange(const char *message, size_t size, char **response, size_t* resp_size) {
     Serial.println("setVoltage desired property just got called");
-
-    char voltage0[] = { 
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.'};
-
-    char voltage1[] = { 
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G'};
-        
-    char voltage2[] = { 
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G'};
-
-    char voltage3[] = { 
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G'};
-
-    char voltage4[] = { 
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G',
-        'G', 'G', 'G', 'G', 'G', 'G', 'G', 'G'};
-
-    char *voltage[] = {voltage0, voltage1, voltage2, voltage3, voltage4, voltage3, voltage2, voltage1, voltage0};
 
     animationInit(voltage, 9, 64, 0, 30, true);
 
@@ -199,72 +234,12 @@ int voltageDesiredChange(const char *message, size_t size, char **response, size
 
     incrementDesiredCount();
 
-    int status = 200;
-    String responseString = "completed";
-    *resp_size = responseString.length()+1;
-    if ((*response = (char*)malloc(*resp_size)) == NULL) {
-        status = -1;
-    } else {
-        responseString.toCharArray((char*)*response, *resp_size);
-    }
-
-    return status;
+    *response = strdup(response_completed);
+    return successStatusCode;
 }
 
 int currentDesiredChange(const char *message, size_t size, char **response, size_t* resp_size) {
     Serial.println("setCurrent desired property just got called");
-
-    char current0[] = { 
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.',
-        '.', '.', '.', '.', '.', '.', '.', '.'};
-
-    char current1[] = { 
-        'g', 'g', '.', '.', '.', '.', '.', '.',
-        'g', 'g', '.', '.', '.', '.', '.', '.',
-        'g', 'g', '.', '.', '.', '.', '.', '.',
-        'g', 'g', '.', '.', '.', '.', '.', '.',
-        'g', 'g', '.', '.', '.', '.', '.', '.',
-        'g', 'g', '.', '.', '.', '.', '.', '.',
-        'g', 'g', '.', '.', '.', '.', '.', '.',
-        'g', 'g', '.', '.', '.', '.', '.', '.'};
-        
-    char current2[] = { 
-        'g', 'g', 'g', 'g', '.', '.', '.', '.',
-        'g', 'g', 'g', 'g', '.', '.', '.', '.',
-        'g', 'g', 'g', 'g', '.', '.', '.', '.',
-        'g', 'g', 'g', 'g', '.', '.', '.', '.',
-        'g', 'g', 'g', 'g', '.', '.', '.', '.',
-        'g', 'g', 'g', 'g', '.', '.', '.', '.',
-        'g', 'g', 'g', 'g', '.', '.', '.', '.',
-        'g', 'g', 'g', 'g', '.', '.', '.', '.'};
-
-    char current3[] = { 
-        'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
-        'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
-        'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
-        'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
-        'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
-        'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
-        'g', 'g', 'g', 'g', 'g', 'g', '.', '.',
-        'g', 'g', 'g', 'g', 'g', 'g', '.', '.'};
-
-    char current4[] = { 
-        'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
-        'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
-        'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
-        'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
-        'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
-        'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
-        'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
-        'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g'};
-
-    char *current[] = {current0, current1, current2, current3, current4, current3, current2, current1, current0};
 
     animationInit(current, 9, 64, 0, 30, false);
 
@@ -276,16 +251,9 @@ int currentDesiredChange(const char *message, size_t size, char **response, size
 
     incrementDesiredCount();
 
-    int status = 200;
-    String responseString = "completed";
-    *resp_size = responseString.length()+1;
-    if ((*response = (char*)malloc(*resp_size)) == NULL) {
-        status = -1;
-    } else {
-        responseString.toCharArray((char*)*response, *resp_size);
-    }
+    *response = strdup(response_completed);
 
-    return status;
+    return successStatusCode;
 }
 
 int irOnDesiredChange(const char *message, size_t size, char **response, size_t* resp_size) {
@@ -298,14 +266,9 @@ int irOnDesiredChange(const char *message, size_t size, char **response, size_t*
 
     incrementDesiredCount();
 
-    int status = 200;
-    String responseString = "completed";
-    *resp_size = responseString.length()+1;
-    if ((*response = (char*)malloc(*resp_size)) == NULL) {
-        status = -1;
-    } else {
-        responseString.toCharArray((char*)*response, *resp_size);
-    }
+    delay(1000);
 
-    return status;
+    *response = strdup(response_completed);
+
+    return successStatusCode;
 }

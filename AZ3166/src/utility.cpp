@@ -130,3 +130,14 @@ bool SyncTimeToNTP() {
 
     return false;
 }
+
+int _stricmp(const char *a, const char *b) {
+    int ca, cb;
+    do {
+       ca = (unsigned char) *a++;
+       cb = (unsigned char) *b++;
+       ca = tolower(ca);
+       cb = tolower(cb);
+    } while (ca == cb && ca != '\0');
+    return ca - cb;
+}
